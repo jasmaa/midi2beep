@@ -1,6 +1,6 @@
 import mido
 import audiolazy
-import pprint
+import sys
 
 def count_cols(track):
     """Count max columns needed for a track"""
@@ -21,94 +21,101 @@ def pad_streams(streams, total_time):
         while len(s) < total_time+1:
             s.append(s[-1])
 
-m = mido.MidiFile("./assets/math.mid")
+# === MAIN ===
+if __name__ == "__main__":
 
-tempo = 500000
-all_streams = []
+    if len(sys.argv) != 2:
+        print("Usage: midi2beep.py <midi file>")
+        exit(1)
+    
+    m = mido.MidiFile(sys.argv[1])
 
-# process tracks
-for track in m.tracks:
-    print("Track: " + track.name)
-    glob_time = 0
-    streams = []
-    n_cols = count_cols(track)
-    for i in range(n_cols):
-        streams.append([-1])
+    tempo = 500000
+    all_streams = []
 
-    print("#Cols: " + str(n_cols))
+    # process tracks
+    for track in m.tracks:
+        print("Track: " + track.name)
+        glob_time = 0
+        streams = []
+        n_cols = count_cols(track)
+        for i in range(n_cols):
+            streams.append([-1])
 
-    for msg in track:
-        
-        if msg.type == "set_tempo":
-            tempo = msg.tempo
-        
-        # process notes
-        if not msg.is_meta:
-            if msg.type == "note_on":
-                set_flag = False
-                glob_time += msg.time
-                pad_streams(streams, glob_time)
-                # find position to start note
-                for s in streams:
-                    if not set_flag and s[-1] == -1:
-                        s[-1] = msg.note
-                        set_flag = True
-                
-            elif msg.type == "note_off":
-                set_flag = False
-                glob_time += msg.time
-                pad_streams(streams, glob_time)
-                # locate and stop note
-                for s in streams:
-                    if not set_flag and s[-1] == msg.note:
-                        s[-1] = -1
-                        set_flag = True
+        print("#Cols: " + str(n_cols))
 
-    all_streams += streams
+        for msg in track:
+            
+            if msg.type == "set_tempo":
+                tempo = msg.tempo
+            
+            # process notes
+            if not msg.is_meta:
+                if msg.type == "note_on":
+                    set_flag = False
+                    glob_time += msg.time
+                    pad_streams(streams, glob_time)
+                    # find position to start note
+                    for s in streams:
+                        if not set_flag and s[-1] == -1:
+                            s[-1] = msg.note
+                            set_flag = True
+                    
+                elif msg.type == "note_off":
+                    set_flag = False
+                    glob_time += msg.time
+                    pad_streams(streams, glob_time)
+                    # locate and stop note
+                    for s in streams:
+                        if not set_flag and s[-1] == msg.note:
+                            s[-1] = -1
+                            set_flag = True
 
-# naive highest note extraction
-single_stream = []
-min_len = 999999999999999999999999999
-for s in all_streams:
-    min_len = min(min_len, len(s))
+        all_streams += streams
 
-for i in range(min_len):
-    max_note = -1
+    # naive highest note extraction
+    single_stream = []
+    min_len = 999999999999999999999999999
     for s in all_streams:
-        max_note = max(max_note, s[i])
-    single_stream.append(max_note)
+        min_len = min(min_len, len(s))
 
-# convert single stream to commands
-cmds = [(-1, 0)]
-counter = 0
-curr_note = -1
-for n in single_stream:
-    if curr_note != n:
-        cmds.append((
-            -1 if curr_note == -1 else int(audiolazy.midi2freq(curr_note)),
-            int(mido.tick2second(counter, m.ticks_per_beat, tempo) * 500)
-        ))
-        curr_note = n
-        counter = 0
-    else:
-        counter += 1
+    for i in range(min_len):
+        max_note = -1
+        for s in all_streams:
+            max_note = max(max_note, s[i])
+        single_stream.append(max_note)
 
-print("Command sample: "cmds[:10])
-print("Done!")
-
-# write out
-with open("out.py", "w") as f:
-    f.write("import winsound, time\n\n")
-    for c in cmds:
-        if c[0] == -1:
-            f.write(f"time.sleep({c[1]} / 1000.0)\n")
+    # convert single stream to commands
+    cmds = [(-1, 0)]
+    counter = 0
+    curr_note = -1
+    for n in single_stream:
+        if curr_note != n:
+            cmds.append((
+                -1 if curr_note == -1 else int(audiolazy.midi2freq(curr_note)),
+                int(mido.tick2second(counter, m.ticks_per_beat, tempo) * 500)
+            ))
+            curr_note = n
+            counter = 0
         else:
-            f.write(f"winsound.Beep({c[0]}, {c[1]})\n")
+            counter += 1
 
-with open("out.txt", "w") as f:
-    for c in cmds:
-        if c[0] == -1:
-            f.write(f"delay({c[1]});\n")
-        else:
-            f.write(f"CircuitPlayground.playTone({c[0]}, {c[1]});\n")
+    print("Command head: " + str(cmds[:10]))
+    print("Done!")
+
+    # write out
+    with open("out.py", "w") as f:
+        f.write("import winsound, time\n\n")
+        for c in cmds:
+            if c[0] == -1:
+                f.write(f"time.sleep({c[1]} / 1000.0)\n")
+            else:
+                f.write(f"winsound.Beep({c[0]}, {c[1]})\n")
+
+    with open("out.txt", "w") as f:
+        for c in cmds:
+            if c[0] == -1:
+                f.write(f"delay({c[1]});\n")
+            else:
+                f.write(f"CircuitPlayground.playTone({c[0]}, {c[1]});\n")
             
